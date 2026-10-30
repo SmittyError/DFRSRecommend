@@ -41,6 +41,13 @@
         <input id="q" type="search" placeholder="e.g. 200 N Main St" aria-label="Street address"/>
         <button id="btnLocate">Locate</button>
       </div>
+      <div id="addrChoices" class="addr-choices" hidden>
+        <div class="addr-choices-head">
+          <span id="addrChoicesTitle" class="label"></span>
+          <button id="addrChoicesCancel" class="linkbtn" type="button">Cancel</button>
+        </div>
+        <div id="addrChoicesList" role="list"></div>
+      </div>
       <p class="hint">Search a street address or click the map. ESZ sets automatically.</p>
     </section>
 

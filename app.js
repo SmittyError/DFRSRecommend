@@ -708,6 +708,7 @@ async function boot(){
 
     // Click to set point + ESZ
     MAP.on('click', async (e)=>{
+      clearAddressChoices();
       if(MARKER) MARKER.remove();
       MARKER=L.marker(e.latlng).addTo(MAP);
       await setESZFromPoint(e.latlng.lat, e.latlng.lng);
@@ -735,31 +736,133 @@ async function boot(){
 
   // Address search via the county geocoder only (street addresses; no intersections)
   B('btnLocate').onclick=locateAddress;
-  B('q').addEventListener('keydown', e=>{ if(e.key==='Enter') locateAddress(); });
+  B('q').addEventListener('keydown', e=>{
+    if(e.key==='Enter') locateAddress();
+    else if(e.key==='Escape' && !B('addrChoices').hidden) clearAddressChoices();
+  });
+  B('addrChoicesCancel').onclick=()=>{ clearAddressChoices(); banner().className='ok'; banner().textContent='Ready'; B('q').focus(); };
 }
 
+async function geocode(path, params){
+  const r = await fetch(GEOCODE_URL + path + '?' + new URLSearchParams({f:'json', ...params}));
+  return r.json();
+}
+
+// Locate flow:
+// 1. findAddressCandidates: one clear, confident match -> go straight there.
+// 2. Otherwise (the county locator returns nothing when an address exists in several towns),
+//    ask /suggest, resolve each suggestion to a point, and let the dispatcher pick the town.
 async function locateAddress(){
   const q=B('q').value.trim();
   if(!q) return;
+  clearAddressChoices();
+  setLocateBusy(true);
   try{
-    const params = new URLSearchParams();
-    params.set('f','json');
-    params.set('SingleLine', q);
-    params.set('outSR','4326');
-    params.set('maxLocations','1');
-    const r = await fetch(GEOCODE_URL + '/findAddressCandidates?' + params.toString());
-    const js = await r.json();
-    const c = js.candidates?.[0];
-    if(!c || c.score < MIN_GEOCODE_SCORE) throw new Error('no confident match');
-    const {x:lon, y:lat} = c.location;
-    if(MARKER) MARKER.remove();
-    MARKER = L.marker([lat, lon]).addTo(MAP);
-    MAP.setView([lat, lon], 16);
-    banner().className='ok'; banner().textContent='Located: '+c.address;
-    await setESZFromPoint(lat, lon); // may replace banner with an ESZ lookup warning
+    const js = await geocode('/findAddressCandidates', {SingleLine:q, outSR:'4326', maxLocations:'10'});
+    const good = (js.candidates||[]).filter(c=>c.score >= MIN_GEOCODE_SCORE);
+    const top = good[0];
+    const tied = top && good.some(c=>c.address!==top.address && c.score===top.score);
+    if(top && !tied) return await goToAddress(top.address, top.location.y, top.location.x);
+
+    const sug = (await geocode('/suggest', {text:q, maxSuggestions:'10'})).suggestions || [];
+    const resolved = (await Promise.all(sug.map(resolveSuggestion))).filter(Boolean);
+    const unique = [...new Map(resolved.map(r=>[r.address, r])).values()];
+    if(!unique.length) throw new Error('no matching address');
+    if(unique.length===1) return await goToAddress(unique[0].address, unique[0].lat, unique[0].lon);
+    showAddressChoices(q, unique);
   }catch(err){
     banner().className='warn'; banner().textContent='Locate failed: '+(err.message||err);
+  }finally{
+    setLocateBusy(false);
   }
+}
+
+async function resolveSuggestion(s){
+  try{
+    const js = await geocode('/findAddressCandidates', {SingleLine:s.text, magicKey:s.magicKey, outSR:'4326', maxLocations:'1'});
+    const c = js.candidates?.[0];
+    return c ? {address:c.address, lat:c.location.y, lon:c.location.x} : null;
+  }catch{ return null; }
+}
+
+async function goToAddress(address, lat, lon){
+  clearAddressChoices();
+  if(MARKER) MARKER.remove();
+  MARKER = L.marker([lat, lon]).addTo(MAP);
+  MAP.setView([lat, lon], 16);
+  banner().className='ok'; banner().textContent='Located: '+address;
+  await setESZFromPoint(lat, lon); // may replace banner with an ESZ lookup warning
+}
+
+function setLocateBusy(busy){
+  B('btnLocate').disabled=busy;
+  B('btnLocate').textContent = busy ? 'Searching…' : 'Locate';
+}
+
+// --- Multiple-match picker (list in the sidebar + numbered pins on the map) ---
+let CHOICE_LAYER=null;
+
+// Uppercase, strip punctuation, and abbreviate directions/street types so typed text
+// compares against the locator's "200 E MAIN ST" style.
+const ABBR = {NORTH:'N',SOUTH:'S',EAST:'E',WEST:'W',STREET:'ST',AVENUE:'AVE',ROAD:'RD',DRIVE:'DR',LANE:'LN',COURT:'CT',PLACE:'PL',BOULEVARD:'BLVD',PIKE:'PIKE',CIRCLE:'CIR',TERRACE:'TER'};
+const normAddr = s => String(s).toUpperCase().replace(/[.,#]/g,' ').split(/\s+/).filter(Boolean).map(w=>ABBR[w]||w).join(' ');
+
+function showAddressChoices(q, options){
+  const typed = normAddr(q.split(',')[0]);
+  const parse = o => { const [street, town='', , zip=''] = o.address.split(',').map(s=>s.trim()); return {...o, street, town, zip}; };
+  // Exact street match (typed text may also carry a town after the street)
+  const isExact = o => { const st=normAddr(o.street); return st.startsWith(typed) || typed.startsWith(st+' '); };
+  const all = options.map(parse);
+  const exact = all.filter(isExact), similar = all.filter(o=>!isExact(o));
+  const ordered = [...exact, ...similar];
+
+  const box=B('addrChoices'), list=B('addrChoicesList');
+  list.innerHTML='';
+  B('addrChoicesTitle').textContent = exact.length > 1
+    ? `${exact.length} towns have this address. Pick one:`
+    : 'No exact single match. Pick an address:';
+
+  CHOICE_LAYER = L.layerGroup().addTo(MAP);
+  const pins = [];
+  ordered.forEach((o,i)=>{
+    const n=i+1;
+    if(i===exact.length && similar.length && exact.length){
+      const h=document.createElement('div'); h.className='addr-choices-sub'; h.textContent='Similar addresses'; list.appendChild(h);
+    }
+    const b=document.createElement('button');
+    b.type='button'; b.className='addr-choice'+(i<exact.length?' exact':''); b.setAttribute('role','listitem');
+    const num=document.createElement('span'); num.className='addr-num'; num.textContent=n;
+    const txt=document.createElement('span'); txt.className='addr-txt';
+    const town=document.createElement('b'); town.textContent=o.town||'(no town)';
+    const st=document.createElement('span'); st.className='addr-street'; st.textContent=`${o.street}${o.zip?' · '+o.zip:''}`;
+    txt.append(town, st); b.append(num, txt);
+    b.onclick=()=>goToAddress(o.address, o.lat, o.lon);
+
+    const pin = L.marker([o.lat,o.lon], {
+      icon: L.divIcon({className:'addr-pin'+(i<exact.length?' exact':''), html:`<span>${n}</span>`, iconSize:[26,26], iconAnchor:[13,13]}),
+      title: o.address, keyboard:false,
+    // Permanent town labels only on exact matches; similar ones label on hover to avoid overlap
+    }).bindTooltip(i<exact.length ? (o.town||o.street) : o.address.split(',').slice(0,2).join(','),
+                   {permanent:i<exact.length, direction:'right', offset:[12,0], className:'addr-tip'})
+      .on('click', ()=>goToAddress(o.address, o.lat, o.lon))
+      .addTo(CHOICE_LAYER);
+    pins.push(pin);
+    // Hovering a row highlights its pin
+    b.onmouseenter=b.onfocus=()=>pin.getElement()?.classList.add('hot');
+    b.onmouseleave=b.onblur=()=>pin.getElement()?.classList.remove('hot');
+    list.appendChild(b);
+  });
+
+  box.hidden=false;
+  MAP.fitBounds(L.latLngBounds(pins.map(p=>p.getLatLng())), {padding:[60,60], maxZoom:15});
+  banner().className='warn'; banner().textContent=`Multiple matches for "${q}". Pick the correct town.`;
+  list.querySelector('button')?.focus();
+}
+
+function clearAddressChoices(){
+  B('addrChoices').hidden=true;
+  B('addrChoicesList').innerHTML='';
+  if(CHOICE_LAYER){ CHOICE_LAYER.remove(); CHOICE_LAYER=null; }
 }
 
 window.addEventListener('error',e=>{ if(banner()){banner().className='warn'; banner().textContent='JS error: '+(e.message||e);}});
