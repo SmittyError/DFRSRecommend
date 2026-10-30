@@ -53,8 +53,7 @@ function setESZ(key){
   clearRecommendation();
   CURRENT_ESZ = key;
   B('esz').textContent = key || '—';
-  B('btnRec').disabled = !key;
-  B('recHint').hidden = !!key;
+  updateRecButton();
   ORDER_EXPANDED = false;
   renderStationOrder();
   if(HILITE) HILITE.setStyle({color:'#3b82f6', weight:4, fillOpacity:0.1});
@@ -78,16 +77,138 @@ function renderStationOrder(){
   }
 }
 
+// Collapse/expand the sidebar (not persisted; resets to open on reload)
+function setSidebar(open){
+  B('app').classList.toggle('side-collapsed', !open);
+  B('side').inert = !open;
+  B('btnCloseSide').setAttribute('aria-expanded', String(open));
+  setTimeout(()=>MAP?.invalidateSize(), 250); // backstop for the ResizeObserver, after the .2s transition
+  (open ? B('btnCloseSide') : B('btnOpenSide'))?.focus();
+}
+
+// "Get recommendation" needs both a location and an incident type
+function updateRecButton(){
+  const hasInc = !!B('incident').value;
+  B('btnRec').disabled = !(CURRENT_ESZ && hasInc);
+  const need = [!CURRENT_ESZ && 'a location', !hasInc && 'an incident type'].filter(Boolean);
+  B('recHint').textContent = need.length ? `Set ${need.join(' and ')} first.` : '';
+}
+
+// --- Incident type combobox ---
+// Typing filters the list (prefix matches first, then contains). Enter/click picks; Esc closes.
+// The chosen code lives in the hidden #incident input, which runRecommend reads.
+function initIncidentCombo(codes){
+  const input=B('incidentInput'), list=B('incidentList'), hidden=B('incident');
+  let matches=[], active=-1, committed=''; // committed = last valid pick, restored on Esc/blur
+
+  const open = ()=>{ list.hidden=false; input.setAttribute('aria-expanded','true'); };
+  const close = ()=>{ list.hidden=true; input.setAttribute('aria-expanded','false'); input.removeAttribute('aria-activedescendant'); active=-1; };
+
+  function render(){
+    const q=input.value.trim().toUpperCase();
+    matches = !q ? codes : [
+      ...codes.filter(c=>c.startsWith(q)),
+      ...codes.filter(c=>!c.startsWith(q) && c.includes(q)),
+    ];
+    list.innerHTML='';
+    if(!matches.length){
+      const li=document.createElement('li'); li.className='combo-empty'; li.textContent='No matching incident type';
+      list.appendChild(li);
+    }
+    matches.forEach((c,i)=>{
+      const li=document.createElement('li');
+      li.id='inc-opt-'+i; li.setAttribute('role','option'); li.className='combo-opt';
+      li.setAttribute('aria-selected', String(c===hidden.value));
+      // Bold the matched part
+      const at = q ? c.indexOf(q) : -1;
+      if(at>=0){ li.append(c.slice(0,at)); const m=document.createElement('mark'); m.textContent=c.slice(at,at+q.length); li.append(m, c.slice(at+q.length)); }
+      else li.textContent=c;
+      li.onmousedown=e=>{ e.preventDefault(); choose(c); };
+      list.appendChild(li);
+    });
+    setActive(matches.length && q ? 0 : -1);
+  }
+  function setActive(i){
+    list.querySelector('.active')?.classList.remove('active');
+    active=i;
+    if(i<0){ input.removeAttribute('aria-activedescendant'); return; }
+    const li=B('inc-opt-'+i); li.classList.add('active'); li.scrollIntoView({block:'nearest'});
+    input.setAttribute('aria-activedescendant', li.id);
+  }
+  function choose(code){
+    const changed = code!==hidden.value;
+    hidden.value=code; input.value=code; committed=code; close();
+    if(changed) clearRecommendation();
+    updateRecButton();
+  }
+  // Leaving the box: keep an exact match, otherwise restore the last valid choice
+  function revert(){ if(committed) choose(committed); else { input.value=''; close(); } }
+  function commitOrRevert(){
+    const typed=input.value.trim().toUpperCase();
+    if(codes.includes(typed)) choose(typed); else revert();
+  }
+
+  input.addEventListener('input', ()=>{
+    if(hidden.value && input.value.trim().toUpperCase()!==hidden.value){ hidden.value=''; clearRecommendation(); updateRecButton(); }
+    render(); open();
+  });
+  // Open the full list (not filtered by the current choice) from a click or the chevron
+  function showAll(){ const q=input.value; input.value=''; render(); input.value=q; open(); }
+  input.addEventListener('focus', ()=>{ input.select(); });
+  input.addEventListener('click', ()=>{ if(list.hidden) showAll(); });
+  input.addEventListener('blur', commitOrRevert);
+  input.addEventListener('keydown', e=>{
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();
+      if(list.hidden){ render(); open(); }
+      const n=matches.length; if(!n) return;
+      setActive(e.key==='ArrowDown' ? (active+1)%n : (active<=0 ? n-1 : active-1));
+    }else if(e.key==='Enter'){
+      if(!list.hidden && active>=0){ e.preventDefault(); choose(matches[active]); }
+      else if(!list.hidden && matches.length===1){ e.preventDefault(); choose(matches[0]); }
+    }else if(e.key==='Escape'){
+      if(!list.hidden){ e.preventDefault(); revert(); }
+    }
+  });
+  B('incidentToggle').onmousedown=e=>{
+    e.preventDefault();
+    if(list.hidden){ input.focus(); showAll(); }
+    else close();
+  };
+}
+
+// Light/dark toggle (not persisted; initial theme comes from the OS preference in index.html)
+function toggleTheme(){
+  const root=document.documentElement;
+  root.dataset.theme = root.dataset.theme==='light' ? 'dark' : 'light';
+  syncThemeButton();
+}
+function syncThemeButton(){
+  const next = document.documentElement.dataset.theme==='light' ? 'dark' : 'light';
+  const label = `Switch to ${next} mode`;
+  B('btnTheme').title=label; B('btnTheme').setAttribute('aria-label', label);
+}
+
 function clearRecommendation(){
   B('rec').innerHTML='';
   B('dbg').textContent='';
   B('recCard').hidden=true;
 }
 
+// Color dot for each recommended unit, keyed by the capability it fills. Unlisted caps show as "other".
+const CAP_KIND = {
+  fire:    ['E','EK','DD','Q','T','TW','AERIAL','ELEV','FS','CAFS','CO','MP','SS','TR','FOB'],
+  water:   ['K','K3000','DDK','TANK','FK'],
+  ems:     ['A','ALS','ALSAMB','BLS','EMS','BUS','MCSU','UTVEMS'],
+  command: ['BC','SAF'],
+};
+const KIND_OF = new Map(Object.entries(CAP_KIND).flatMap(([k,caps])=>caps.map(c=>[c,k])));
+const capKind = cap => KIND_OF.get(normCap(cap)) || 'other';
+
 function unitPill(it){
   const s=document.createElement('span');
   if(it.unit==='NEEDED'){ s.className='pill needed'; s.textContent='NEEDED'; return s; }
-  s.className='pill blue'; s.dataset.unit=it.unit;
+  s.className='pill blue'; s.dataset.unit=it.unit; s.dataset.kind=capKind(it.cap);
   const name=document.createElement('b'); name.textContent=it.unit; s.appendChild(name);
   const st=trailing(it.st)||it.st;
   if(st){ const sub=document.createElement('span'); sub.className='pill-sub'; sub.textContent='· Sta '+st; s.appendChild(sub); }
@@ -546,7 +667,20 @@ async function boot(){
 
   // Map
   try{
-    MAP=L.map('map').setView([39.414,-77.410],11);
+    MAP=L.map('map',{zoomControl:false}).setView([39.414,-77.410],11);
+    // Reopen-sidebar button sits above the zoom control (only visible while collapsed)
+    const SideToggle = L.Control.extend({
+      onAdd(){
+        const b=L.DomUtil.create('button','map-open-side');
+        b.id='btnOpenSide'; b.type='button'; b.title='Show panel'; b.setAttribute('aria-label','Show panel');
+        b.innerHTML='<span aria-hidden="true">»</span> Panel';
+        L.DomEvent.disableClickPropagation(b);
+        b.onclick=()=>setSidebar(true);
+        return b;
+      }
+    });
+    new SideToggle({position:'topleft'}).addTo(MAP);
+    L.control.zoom({position:'topleft'}).addTo(MAP);
     // Frederick County basemap only (no third-party tile fallback)
     const basemap = L.esri.tiledMapLayer({
       // Web Mercator cache; Tiled/BaseMap is State Plane and won't render in Leaflet
@@ -580,17 +714,20 @@ async function boot(){
     });
   }catch(err){ console.warn('Map init failed',err); }
 
-  // Incidents dropdown
-  const inc=B('incident'); inc.innerHTML='';
-  Object.keys(DATA.PLAN_STRUCT||{}).sort().forEach(k=>{ const o=document.createElement('option'); o.value=o.textContent=k; inc.appendChild(o); });
+  // Incident type: type-to-search combobox, nothing selected by default
+  initIncidentCombo(Object.keys(DATA.PLAN_STRUCT||{}).sort());
 
   // No ESZ until the user clicks the map or searches an address
   setESZ(null);
-  B('incident').onchange=clearRecommendation;
   B('btnOrderMore').onclick=()=>{ ORDER_EXPANDED=!ORDER_EXPANDED; renderStationOrder(); };
+  B('btnCloseSide').onclick=()=>setSidebar(false);
+  B('btnTheme').onclick=toggleTheme;
+  syncThemeButton();
+  // Leaflet must re-measure whenever the map box changes size (sidebar collapse, window resize)
+  new ResizeObserver(()=>MAP?.invalidateSize()).observe(B('map'));
 
   // Buttons
-  B('btnRec').onclick=()=>{ if(!CURRENT_ESZ) return; try{ runRecommend(); banner().className='ok'; banner().textContent='Ready'; }catch(err){ banner().className='warn'; banner().textContent='Recommendation failed: '+(err.message||err); } };
+  B('btnRec').onclick=()=>{ if(!CURRENT_ESZ || !B('incident').value) return; try{ runRecommend(); banner().className='ok'; banner().textContent='Ready'; }catch(err){ banner().className='warn'; banner().textContent='Recommendation failed: '+(err.message||err); } };
   B('btnDispatch').onclick=sendDispatch;
   B('btnStatus').onclick=openStatus;
   B('closeStatus').onclick=()=>B('statusModal').setAttribute('aria-hidden','true');

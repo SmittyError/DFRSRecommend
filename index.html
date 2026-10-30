@@ -3,77 +3,112 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="color-scheme" content="dark light"/>
 <title>FDK Recommend</title>
+<script>
+  // Start in the OS light/dark preference (not saved; the toggle only lasts for this page load)
+  document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+</script>
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css"/>
 <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
 <div id="app">
-  <div id="side">
-    <h1>FDK Recommend</h1>
-    <div id="banner" class="ok" style="display:block">Ready</div>
+  <aside id="side">
+    <header class="appbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2c1 3.5 5 6 5 11a5 5 0 0 1-10 0c0-2.2 1-3.8 2.2-5 .2 1.7 1 2.8 2.3 3.3C11 8.8 11.3 5.2 12 2z"/></svg>
+        </span>
+        <div>
+          <h1>FDK Recommend</h1>
+          <div class="subtitle">Frederick County run-card assistant</div>
+        </div>
+        <div class="appbar-actions">
+          <button id="btnTheme" class="icon-btn" type="button" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
+            <svg class="icon-sun" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+          </button>
+          <button id="btnCloseSide" class="icon-btn" type="button" title="Hide panel" aria-label="Hide panel" aria-controls="side" aria-expanded="true">«</button>
+        </div>
+      </div>
+      <div id="banner" class="ok" role="status" aria-live="polite">Ready</div>
+    </header>
 
-    <div class="card">
-      <div class="small">Step 1 • Location</div>
-      <div class="row">
-        <input id="q" placeholder="200 N Main St"/>
+    <section class="card">
+      <h2 class="step"><span class="step-num">1</span>Location</h2>
+      <div class="field-row">
+        <input id="q" type="search" placeholder="e.g. 200 N Main St" aria-label="Street address"/>
         <button id="btnLocate">Locate</button>
       </div>
-      <div class="row small">Search a street address or click the map. ESZ will set automatically.</div>
-    </div>
+      <p class="hint">Search a street address or click the map. ESZ sets automatically.</p>
+    </section>
 
-    <div class="card">
-      <div class="small">Step 2 • Beat</div>
-      <div class="row">
-        <label>ESZ:</label>
-        <span id="esz">—</span>
+    <section class="card">
+      <h2 class="step"><span class="step-num">2</span>Beat</h2>
+      <div class="esz-row">
+        <span class="label">ESZ</span>
+        <span id="esz" class="esz-value">—</span>
       </div>
-      <div id="stationOrder" class="small" style="margin-top:4px"></div>
+      <div id="stationOrder" class="hint"></div>
       <button id="btnOrderMore" class="linkbtn" hidden></button>
-      <div class="row" style="margin-top:8px">
-        <label class="toggle"><input id="mutualAid" type="checkbox" checked/> Mutual Aid</label>
-        <button id="btnStatus" class="secondary">Unit status…</button>
+      <div class="field-row split">
+        <label class="toggle"><input id="mutualAid" type="checkbox" checked/><span class="switch" aria-hidden="true"></span>Mutual aid</label>
+        <div class="btnrow">
+          <button id="btnStatus" class="secondary">Unit status…</button>
+          <button id="resetCaps" class="ghost" title="Reset ad-hoc capabilities">Reset caps</button>
+        </div>
       </div>
-      <div class="row" style="margin-top:8px">
-        <button id="resetCaps" class="secondary">Reset ad‑hoc caps</button>
-      </div>
-    </div>
+    </section>
 
-    <div class="card">
-      <div class="small">Step 3 • Incident</div>
-      <label>Incident type</label>
-      <select id="incident"></select>
-      <div id="planTxt" class="small" style="margin-top:6px"></div>
-      <div class="btnrow" style="margin-top:6px">
-        <button id="btnRec" disabled>Get recommendation</button>
+    <section class="card">
+      <h2 class="step"><span class="step-num">3</span>Incident</h2>
+      <label class="label" for="incidentInput">Incident type</label>
+      <div class="combo">
+        <input id="incidentInput" type="text" placeholder="Type to search, e.g. BLDG" autocomplete="off" spellcheck="false"
+               role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="incidentList"/>
+        <button id="incidentToggle" class="combo-toggle" type="button" tabindex="-1" aria-label="Show all incident types">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <ul id="incidentList" class="combo-list" role="listbox" aria-label="Incident types" hidden></ul>
+        <input id="incident" type="hidden"/>
       </div>
-      <div id="recHint" class="small" style="margin-top:6px">Set a location first.</div>
-    </div>
+      <div id="planTxt" class="hint"></div>
+      <button id="btnRec" class="primary block" disabled>Get recommendation</button>
+      <p id="recHint" class="hint">Set a location first.</p>
+    </section>
 
-    <div class="card" id="recCard" hidden>
-      <div class="small">Recommendation</div>
+    <section class="card rec-card" id="recCard" hidden>
+      <h2 class="step"><span class="step-num accent">✓</span>Recommendation</h2>
       <div id="rec"></div>
-      <div class="btnrow dispatch-row">
-        <button id="btnDispatch" class="danger">Send dispatch…</button>
+      <div class="legend" aria-label="Unit type colors">
+        <span class="pill" data-kind="fire">Fire</span>
+        <span class="pill" data-kind="water">Water</span>
+        <span class="pill" data-kind="ems">EMS</span>
+        <span class="pill" data-kind="command">Command</span>
+        <span class="pill" data-kind="other">Other</span>
       </div>
-    </div>
+      <div class="dispatch-row">
+        <button id="btnDispatch" class="danger block">Send dispatch…</button>
+      </div>
+    </section>
 
-    <details class="card">
-      <summary class="small">Details</summary>
-      <div class="small" style="margin-top:8px">
+    <details class="card details">
+      <summary>Details</summary>
+      <p class="hint">
         Run card only. “If closer” = earlier station in run card is eligible; hydrant overrides are honored unless set to AQ. Mutual Aid OFF ⇒ only 900‑series stations.
-      </div>
-      <details style="margin-top:8px">
-        <summary class="small">Debug: show selection reasons</summary><pre id="dbg" class="small"></pre>
+      </p>
+      <details class="nested">
+        <summary>Debug: selection reasons</summary><pre id="dbg"></pre>
       </details>
     </details>
-  </div>
-  <div id="map"></div>
+  </aside>
+  <main id="map" aria-label="Map"></main>
 </div>
 
 <div class="modal" id="statusModal" aria-hidden="true">
-  <div class="panel">
-    <div class="modal-header"><h2>Unit status & caps</h2><button id="closeStatus" class="close-x" aria-label="Close">×</button></div>
+  <div class="panel" role="dialog" aria-labelledby="statusTitle">
+    <div class="modal-header"><h2 id="statusTitle">Unit status &amp; caps</h2><button id="closeStatus" class="close-x" aria-label="Close">×</button></div>
     <div id="statusGrid"></div>
   </div>
 </div>
