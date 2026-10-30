@@ -10,6 +10,9 @@ let HILITE=null; // geojson layer for selected ESZ outline
 
 // ESZ FeatureServer (Fire ESZ)
 const ESZ_URL = 'https://fcgis.frederickcountymd.gov/server_pub/rest/services/PublicSafety/EmergencyESZ/MapServer/0';
+// County address locator (Frederick County addresses only)
+const GEOCODE_URL = 'https://fcgis.frederickcountymd.gov/server_pub/rest/services/Geoprocessors/FrederickCountyAddressesPublic/GeocodeServer';
+const MIN_GEOCODE_SCORE = 90;
 
 function mutualAidEnabled(){ return B('mutualAid').checked; }
 function isAvailable(u){ return (STATUS.get(u) || DATA?.UNIT_STATUS?.[u] || 'AQ') === 'AQ'; }
@@ -443,6 +446,13 @@ function renderStatusCaps(){
   }
 }
 
+function resetCaps(){
+  USER_CAPS.clear();
+  REMOVED_CAPS.clear();
+  if(B('statusModal').getAttribute('aria-hidden')==='false') renderStatusCaps();
+  banner().className='ok'; banner().textContent='Ad-hoc caps reset';
+}
+
 // --- ESZ selection from point (click/locate) ---
 async function setESZFromPoint(lat, lon){
   try{
@@ -497,23 +507,17 @@ async function boot(){
   // Map
   try{
     MAP=L.map('map').setView([39.414,-77.410],11);
-    // Frederick County basemap (with fallback)
-    try {
-      const basemap = L.esri.tiledMapLayer({
-        url:'https://fcgis.frederickcountymd.gov/server_pub/rest/services/Basemap/Basemap/MapServer'
-      }).addTo(MAP);
-      basemap.on('tileerror', ()=>{
-        // Fallback if tiles fail
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(MAP);
-      });
-    } catch (e) {
-      // Last-resort fallback
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
-      }).addTo(MAP);
-    }
+    // Frederick County basemap only (no third-party tile fallback)
+    const basemap = L.esri.tiledMapLayer({
+      url:'https://fcgis.frederickcountymd.gov/server_pub/rest/services/Basemap/Basemap/MapServer'
+    }).addTo(MAP);
+    // Warn only when no tile in the current view loads (edge tiles can 404 normally)
+    let tilesOk=0;
+    basemap.on('loading', ()=>{ tilesOk=0; });
+    basemap.on('tileload', ()=>{ tilesOk++; });
+    basemap.on('load', ()=>{
+      if(!tilesOk){ banner().className='warn'; banner().textContent='County basemap tiles failed to load'; }
+    });
 
     // Click to set point + ESZ
     MAP.on('click', async (e)=>{
@@ -538,38 +542,33 @@ async function boot(){
   B('closeStatus').onclick=()=>B('statusModal').setAttribute('aria-hidden','true');
   B('resetCaps').onclick=resetCaps;
 
-  // Geocode (Nominatim) scoped to Frederick County
-  B('btnLocate').onclick=async ()=>{
-    const mode=B('searchMode').value; let q=B('q').value.trim();
-    if(!q) return;
-    try{
-      const url = new URL('https://nominatim.openstreetmap.org/search');
-      url.searchParams.set('format','json');
-      url.searchParams.set('bounded','1');
-      url.searchParams.set('limit','1');
-      // Frederick County bounding box (approx): west, north, east, south
-      url.searchParams.set('viewbox','-77.85,39.75,-77.00,39.15');
+  // Address search via the county geocoder only (street addresses; no intersections)
+  B('btnLocate').onclick=locateAddress;
+  B('q').addEventListener('keydown', e=>{ if(e.key==='Enter') locateAddress(); });
+}
 
-      if(mode==='intersection'){
-        const parts=q.split('&').map(s=>s.trim());
-        if(parts.length>=2){ q = `${parts[0]} & ${parts[1]}, Frederick County, MD`; }
-      }else{
-        q = `${q}, Frederick County, MD`;
-      }
-      url.searchParams.set('q', q);
-
-      const r = await fetch(url, {headers:{'Accept':'application/json'}});
-      const js = await r.json();
-      if(!js.length) throw new Error('not found');
-      const {lat, lon} = js[0];
-      if(MARKER) MARKER.remove();
-      MARKER = L.marker([+lat, +lon]).addTo(MAP);
-      MAP.setView([+lat, +lon], 13);
-      await setESZFromPoint(+lat, +lon);
-    }catch(err){
-      banner().className='warn'; banner().textContent='Locate failed: '+(err.message||err);
-    }
-  };
+async function locateAddress(){
+  const q=B('q').value.trim();
+  if(!q) return;
+  try{
+    const params = new URLSearchParams();
+    params.set('f','json');
+    params.set('SingleLine', q);
+    params.set('outSR','4326');
+    params.set('maxLocations','1');
+    const r = await fetch(GEOCODE_URL + '/findAddressCandidates?' + params.toString());
+    const js = await r.json();
+    const c = js.candidates?.[0];
+    if(!c || c.score < MIN_GEOCODE_SCORE) throw new Error('no confident match');
+    const {x:lon, y:lat} = c.location;
+    if(MARKER) MARKER.remove();
+    MARKER = L.marker([lat, lon]).addTo(MAP);
+    MAP.setView([lat, lon], 16);
+    banner().className='ok'; banner().textContent='Located: '+c.address;
+    await setESZFromPoint(lat, lon); // may replace banner with an ESZ lookup warning
+  }catch(err){
+    banner().className='warn'; banner().textContent='Locate failed: '+(err.message||err);
+  }
 }
 
 window.addEventListener('error',e=>{ if(banner()){banner().className='warn'; banner().textContent='JS error: '+(e.message||e);}});

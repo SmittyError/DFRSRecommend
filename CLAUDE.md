@@ -29,4 +29,8 @@
   NON_HYDRANT_ESZ.
 - GIS: Leaflet map with a county basemap; ESZ is found by querying the
   county EmergencyESZ MapServer layer for the clicked or located point.
+- Address search uses the county locator
+  Geoprocessors/FrederickCountyAddressesPublic/GeocodeServer. It matches
+  street addresses only (no intersections or POIs).
+- Leaflet 1.9.4 and esri-leaflet 3.1.0 are vendored in vendor/.
 - Known open item: two plans require a BUS capability no unit has.

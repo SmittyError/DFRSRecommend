@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>FDK Recommend</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css"/>
 <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
@@ -16,15 +16,10 @@
     <div class="card">
       <div class="small">Step 1 • Location</div>
       <div class="row">
-        <select id="searchMode">
-          <option value="address" selected>Address</option>
-          <option value="intersection">Intersection</option>
-          <option value="poi">POI</option>
-        </select>
         <input id="q" placeholder="200 N Main St"/>
         <button id="btnLocate">Locate</button>
       </div>
-      <div class="row small">Click the map or search above. ESZ will set automatically.</div>
+      <div class="row small">Search a street address or click the map. ESZ will set automatically.</div>
     </div>
 
     <div class="card">
@@ -71,8 +66,8 @@
   </div>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/esri-leaflet@3/dist/esri-leaflet.js"></script>
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/esri-leaflet/esri-leaflet.js"></script>
 <script src="data.js"></script>
 <script src="app.js"></script>
 </body>
