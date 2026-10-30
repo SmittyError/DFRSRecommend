@@ -509,7 +509,8 @@ async function boot(){
     MAP=L.map('map').setView([39.414,-77.410],11);
     // Frederick County basemap only (no third-party tile fallback)
     const basemap = L.esri.tiledMapLayer({
-      url:'https://fcgis.frederickcountymd.gov/server_pub/rest/services/Basemap/Basemap/MapServer'
+      // Web Mercator cache; Tiled/BaseMap is State Plane and won't render in Leaflet
+      url:'https://fcgis.frederickcountymd.gov/server_pub/rest/services/Tiled/BaseMap_Tiled_WGS84/MapServer'
     }).addTo(MAP);
     // Warn only when no tile in the current view loads (edge tiles can 404 normally)
     let tilesOk=0;
