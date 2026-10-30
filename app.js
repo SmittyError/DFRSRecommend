@@ -5,6 +5,8 @@ const normCap = c => String(c||'').trim().toUpperCase();
 const trailing = s => String(s||'').match(/(\d{3})$/)?.[1]||null;
 
 let MAP, MARKER, CURRENT_ESZ=null;
+let CURRENT_ADDR=null, ADDR_REQ=0; // label for the current location; ADDR_REQ drops stale reverse lookups
+let INCIDENT_COMBO=null;
 const STATUS=new Map(), DEFAULT_STATUS=new Map(), USER_CAPS=new Map(), REMOVED_CAPS=new Map();
 let HILITE=null; // geojson layer for selected ESZ outline
 
@@ -175,6 +177,7 @@ function initIncidentCombo(codes){
     if(list.hidden){ input.focus(); showAll(); }
     else close();
   };
+  return { reset(){ hidden.value=''; input.value=''; committed=''; close(); updateRecButton(); } };
 }
 
 // Light/dark toggle (not persisted; initial theme comes from the OS preference in index.html)
@@ -511,12 +514,160 @@ function renderRecommendation(arr){
 
 function sendDispatch(){
   // NEEDED placeholders carry no data-unit, so they are never dispatched
-  const units = [...document.querySelectorAll('#rec .pill[data-unit]')].map(p=>p.dataset.unit);
+  const units = [...document.querySelectorAll('#rec .pill[data-unit]')].map(p=>({unit:p.dataset.unit, kind:p.dataset.kind}));
   if(!units.length){ banner().className='warn'; banner().textContent='No units selected'; return; }
-  if(!confirm(`Dispatch ${units.length} unit(s) and mark them CALL?\n\n${units.join(', ')}`)) return;
-  for(const u of units){ STATUS.set(u,'CALL'); }
+  if(!MARKER){ banner().className='warn'; banner().textContent='Set a location before dispatching'; return; }
+  const names = units.map(u=>u.unit);
+  if(!confirm(`Dispatch ${names.length} unit(s) and mark them CALL?\n\n${names.join(', ')}`)) return;
+  for(const u of names){ STATUS.set(u,'CALL'); }
+  const {lat, lng} = MARKER.getLatLng();
+  const inc = createIncident({type:B('incident').value, esz:CURRENT_ESZ, address:CURRENT_ADDR, lat, lon:lng, units});
+  resetDispatchForm();
+  banner().className='ok'; banner().textContent=`Incident #${inc.id} dispatched: ${names.join(', ')}`;
+}
+
+// Ready the Dispatch tab for the next call: the incident now has its own pin
+function resetDispatchForm(){
   clearRecommendation();
-  const b=banner(); if(b){ b.className='ok'; b.textContent='Dispatch sent: '+units.join(', '); }
+  clearAddressChoices();
+  if(MARKER){ MARKER.remove(); MARKER=null; }
+  if(HILITE){ HILITE.remove(); HILITE=null; }
+  CURRENT_ADDR=null; ADDR_REQ++;
+  B('q').value='';
+  INCIDENT_COMBO?.reset();
+  setESZ(null);
+}
+
+// --- Active incidents (in memory only; cleared on reload per the no-persistence rule) ---
+// Numbered per session; no timestamps are recorded.
+const INCIDENTS = new Map(); // id -> {id, type, esz, address, lat, lon, units:[{unit,kind}], pin}
+let INC_SEQ = 0;
+
+function createIncident({type, esz, address, lat, lon, units}){
+  const inc = {id:++INC_SEQ, type, esz, address, lat, lon, units:[...units]};
+  inc.pin = L.marker([lat, lon], {
+    // Tip of the rotated 30px teardrop sits ~21px below its center
+    icon: L.divIcon({className:'inc-pin', html:`<span><i>${inc.id}</i></span>`, iconSize:[30,30], iconAnchor:[15,36], popupAnchor:[0,-34]}),
+    title: `Incident #${inc.id} ${type}`, zIndexOffset:500,
+  }).bindPopup(()=>incidentPopup(inc), {className:'inc-popup', minWidth:220}).addTo(MAP);
+  INCIDENTS.set(inc.id, inc);
+  renderIncidents();
+  return inc;
+}
+
+function incidentLocation(inc){
+  return inc.address || (inc.esz ? `Map point in ESZ ${inc.esz}` : 'Map point');
+}
+
+// Return a unit to service so it can be recommended again
+function clearUnit(inc, unit){
+  STATUS.set(unit, 'AQ');
+  inc.units = inc.units.filter(u=>u.unit!==unit);
+  if(!inc.units.length){ removeIncident(inc); banner().className='ok'; banner().textContent=`${unit} cleared. Incident #${inc.id} closed.`; }
+  else { renderIncidents(); banner().className='ok'; banner().textContent=`${unit} cleared from incident #${inc.id}`; }
+}
+
+function closeIncident(inc){
+  const names = inc.units.map(u=>u.unit);
+  if(names.length && !confirm(`Close incident #${inc.id} and clear ${names.length} unit(s)?\n\n${names.join(', ')}`)) return;
+  for(const u of names) STATUS.set(u, 'AQ');
+  removeIncident(inc);
+  banner().className='ok'; banner().textContent=`Incident #${inc.id} closed` + (names.length ? `; cleared ${names.join(', ')}` : '');
+}
+
+function removeIncident(inc){
+  inc.pin.remove();
+  INCIDENTS.delete(inc.id);
+  renderIncidents();
+}
+
+// Units changed away from CALL in the Unit status window drop off their incident
+function syncIncidentsFromStatus(){
+  for(const inc of [...INCIDENTS.values()]){
+    inc.units = inc.units.filter(u=>STATUS.get(u.unit)==='CALL');
+    if(!inc.units.length) removeIncident(inc);
+  }
+  renderIncidents();
+}
+
+function focusIncident(inc){
+  MAP.setView([inc.lat, inc.lon], Math.max(MAP.getZoom(), 15));
+  inc.pin.openPopup();
+}
+
+function unitChip(inc, u){
+  const s=document.createElement('span'); s.className='pill blue unit-chip'; s.dataset.kind=u.kind||'other';
+  const b=document.createElement('b'); b.textContent=u.unit; s.appendChild(b);
+  const x=document.createElement('button'); x.type='button'; x.className='pillx'; x.textContent='×';
+  x.title=`Clear ${u.unit} (back to AQ)`; x.setAttribute('aria-label', x.title);
+  x.onclick=e=>{ e.stopPropagation(); clearUnit(inc, u.unit); };
+  s.appendChild(x);
+  return s;
+}
+
+function incidentPopup(inc){
+  const d=document.createElement('div'); d.className='inc-pop';
+  const h=document.createElement('div'); h.className='inc-pop-title'; h.textContent=`#${inc.id} · ${inc.type}`;
+  const a=document.createElement('div'); a.className='inc-pop-addr'; a.textContent=incidentLocation(inc);
+  const units=document.createElement('div'); units.className='inc-units';
+  inc.units.forEach(u=>units.appendChild(unitChip(inc, u)));
+  const close=document.createElement('button'); close.type='button'; close.className='secondary inc-close'; close.textContent='Close incident';
+  close.onclick=()=>closeIncident(inc);
+  d.append(h, a, units, close);
+  return d;
+}
+
+function renderIncidents(){
+  const list=B('activeList'); list.innerHTML='';
+  const all=[...INCIDENTS.values()].sort((a,b)=>b.id-a.id); // newest first
+  B('activeCount').textContent=all.length;
+  B('activeCount').classList.toggle('has', all.length>0);
+  B('activeEmpty').hidden = all.length>0;
+  for(const inc of all){
+    const card=document.createElement('article'); card.className='card inc-card';
+    const head=document.createElement('div'); head.className='inc-head';
+    const num=document.createElement('span'); num.className='inc-num'; num.textContent=inc.id;
+    const title=document.createElement('div'); title.className='inc-title';
+    const type=document.createElement('b'); type.textContent=inc.type;
+    const where=document.createElement('span'); where.className='inc-where'; where.textContent=incidentLocation(inc);
+    title.append(type, where);
+    const view=document.createElement('button'); view.type='button'; view.className='ghost inc-view'; view.textContent='Map';
+    view.title='Show on map'; view.onclick=()=>focusIncident(inc);
+    head.append(num, title, view);
+
+    const meta=document.createElement('div'); meta.className='hint';
+    meta.textContent = `ESZ ${inc.esz||'—'} · ${inc.units.length} unit${inc.units.length===1?'':'s'} assigned`;
+
+    const units=document.createElement('div'); units.className='inc-units';
+    inc.units.forEach(u=>units.appendChild(unitChip(inc, u)));
+
+    const close=document.createElement('button'); close.type='button'; close.className='secondary inc-close'; close.textContent='Close incident';
+    close.onclick=()=>closeIncident(inc);
+
+    card.append(head, meta, units, close);
+    list.appendChild(card);
+    // Keep an open popup in step with the list
+    if(inc.pin.isPopupOpen()) inc.pin.setPopupContent(incidentPopup(inc));
+  }
+}
+
+function showTab(name){
+  for(const [btn, panel] of [['tabBtnDispatch','tabDispatch'],['tabBtnActive','tabActive']]){
+    const on = panel === (name==='active' ? 'tabActive' : 'tabDispatch');
+    B(btn).setAttribute('aria-selected', String(on));
+    B(panel).hidden = !on;
+  }
+}
+
+// Nearest county address for a clicked point (coordinates only go to the county locator)
+async function labelFromPoint(lat, lon){
+  const req = ++ADDR_REQ;
+  CURRENT_ADDR = null;
+  try{
+    const js = await geocode('/reverseGeocode', {location:JSON.stringify({x:lon, y:lat, spatialReference:{wkid:4326}}), outSR:'4326'});
+    const addr = js.address?.Match_addr;
+    if(req===ADDR_REQ && addr) CURRENT_ADDR = 'Near ' + addr;
+  }catch{ /* no nearby address: incident falls back to the ESZ label */ }
 }
 
 function openStatus(){
@@ -548,7 +699,7 @@ function openStatus(){
 
       const sel=document.createElement('select'); ['AQ','PA','CA','CALL','OOS'].forEach(v=>{ const o=document.createElement('option'); o.value=v;o.text=v; sel.appendChild(o); });
       sel.value = STATUS.get(u)||DATA?.UNIT_STATUS?.[u]||'AQ';
-      sel.onchange=()=>STATUS.set(u,sel.value);
+      sel.onchange=()=>{ STATUS.set(u,sel.value); syncIncidentsFromStatus(); };
       badge.appendChild(sel);
 
       const capIn=document.createElement('input'); capIn.placeholder='add cap'; capIn.size=6;
@@ -711,12 +862,13 @@ async function boot(){
       clearAddressChoices();
       if(MARKER) MARKER.remove();
       MARKER=L.marker(e.latlng).addTo(MAP);
+      labelFromPoint(e.latlng.lat, e.latlng.lng);
       await setESZFromPoint(e.latlng.lat, e.latlng.lng);
     });
   }catch(err){ console.warn('Map init failed',err); }
 
   // Incident type: type-to-search combobox, nothing selected by default
-  initIncidentCombo(Object.keys(DATA.PLAN_STRUCT||{}).sort());
+  INCIDENT_COMBO = initIncidentCombo(Object.keys(DATA.PLAN_STRUCT||{}).sort());
 
   // No ESZ until the user clicks the map or searches an address
   setESZ(null);
@@ -730,6 +882,9 @@ async function boot(){
   // Buttons
   B('btnRec').onclick=()=>{ if(!CURRENT_ESZ || !B('incident').value) return; try{ runRecommend(); banner().className='ok'; banner().textContent='Ready'; }catch(err){ banner().className='warn'; banner().textContent='Recommendation failed: '+(err.message||err); } };
   B('btnDispatch').onclick=sendDispatch;
+  B('tabBtnDispatch').onclick=()=>showTab('dispatch');
+  B('tabBtnActive').onclick=()=>showTab('active');
+  renderIncidents();
   B('btnStatus').onclick=openStatus;
   B('closeStatus').onclick=()=>B('statusModal').setAttribute('aria-hidden','true');
   B('resetCaps').onclick=resetCaps;
@@ -789,6 +944,7 @@ async function goToAddress(address, lat, lon){
   clearAddressChoices();
   if(MARKER) MARKER.remove();
   MARKER = L.marker([lat, lon]).addTo(MAP);
+  CURRENT_ADDR = address; ADDR_REQ++;
   MAP.setView([lat, lon], 16);
   banner().className='ok'; banner().textContent='Located: '+address;
   await setESZFromPoint(lat, lon); // may replace banner with an ESZ lookup warning

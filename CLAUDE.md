@@ -33,4 +33,8 @@
   Geoprocessors/FrederickCountyAddressesPublic/GeocodeServer. It matches
   street addresses only (no intersections or POIs).
 - Leaflet 1.9.4 and esri-leaflet 3.1.0 are vendored in vendor/.
+- Active incidents (Active tab) live in memory only and are numbered per
+  session, with no timestamps. Dispatch sets units to CALL; clearing a unit
+  or closing an incident sets them back to AQ. Map-click locations are
+  labeled via the county locator's reverseGeocode (coordinates only).
 - Known open item: two plans require a BUS capability no unit has.

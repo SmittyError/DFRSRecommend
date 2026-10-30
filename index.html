@@ -35,6 +35,14 @@
       <div id="banner" class="ok" role="status" aria-live="polite">Ready</div>
     </header>
 
+    <nav class="tabs" role="tablist" aria-label="Panels">
+      <button id="tabBtnDispatch" class="tab" role="tab" type="button" aria-selected="true" aria-controls="tabDispatch">Dispatch</button>
+      <button id="tabBtnActive" class="tab" role="tab" type="button" aria-selected="false" aria-controls="tabActive">
+        Active <span id="activeCount" class="tab-count">0</span>
+      </button>
+    </nav>
+
+    <div id="tabDispatch" class="tabpanel" role="tabpanel" aria-labelledby="tabBtnDispatch">
     <section class="card">
       <h2 class="step"><span class="step-num">1</span>Location</h2>
       <div class="field-row">
@@ -109,6 +117,15 @@
         <summary>Debug: selection reasons</summary><pre id="dbg"></pre>
       </details>
     </details>
+    </div>
+
+    <div id="tabActive" class="tabpanel" role="tabpanel" aria-labelledby="tabBtnActive" hidden>
+      <div id="activeEmpty" class="card empty-state">
+        <p><b>No active incidents.</b></p>
+        <p class="hint">Dispatched calls appear here with their units. Clear units to make them available for recommendation again.</p>
+      </div>
+      <div id="activeList" class="active-list"></div>
+    </div>
   </aside>
   <main id="map" aria-label="Map"></main>
 </div>

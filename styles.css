@@ -271,3 +271,40 @@ button.addr-choice.exact .addr-num{background:var(--accent);border-color:var(--a
 .addr-pin.hot{z-index:1000 !important}
 .leaflet-tooltip.addr-tip{font:700 11.5px var(--font);padding:2px 6px;border-radius:6px;color:#0f172a;background:#fff;border:1px solid #cbd5e1;box-shadow:0 1px 3px rgba(0,0,0,.2)}
 .leaflet-tooltip.addr-tip::before{display:none}
+
+/* ---------- Tabs ---------- */
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:10px;background:var(--surface);border:1px solid var(--border)}
+button.tab{height:34px;background:transparent;color:var(--muted);border:0;border-radius:7px;display:flex;align-items:center;justify-content:center;gap:8px}
+button.tab:hover{background:var(--raised);color:var(--text)}
+button.tab[aria-selected="true"]{background:var(--raised);color:var(--text);box-shadow:inset 0 0 0 1px var(--border-strong)}
+.tab-count{min-width:20px;height:20px;padding:0 6px;border-radius:999px;display:inline-grid;place-items:center;font:700 11.5px var(--font);background:var(--border-strong);color:var(--text)}
+.tab-count.has{background:var(--danger);color:#fff}
+.tabpanel{display:flex;flex-direction:column;gap:12px}
+
+/* ---------- Active incidents ---------- */
+.empty-state{align-items:flex-start}
+.active-list{display:flex;flex-direction:column;gap:12px}
+.active-list:empty{display:none}
+.inc-card{border-left:3px solid var(--danger)}
+.inc-head{display:flex;align-items:center;gap:10px}
+.inc-num{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--danger);color:#fff;font:700 13px var(--font)}
+.inc-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.inc-title b{font:700 14px var(--mono);letter-spacing:.02em}
+.inc-where{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button.inc-view{height:30px;padding:0 10px;font-size:12px}
+.inc-units{display:flex;flex-wrap:wrap;gap:6px}
+.unit-chip{padding-right:4px}
+.unit-chip .pillx{margin-left:2px}
+.unit-chip .pillx:hover{background:var(--danger);color:#fff}
+button.inc-close{height:32px;font-size:12.5px;align-self:flex-start}
+
+/* Incident pins and popups on the map */
+/* Teardrop: rounded square rotated so the sharp corner points at the location */
+.inc-pin span{display:grid;place-items:center;width:30px;height:30px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);background:#dc2626;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+.inc-pin i{transform:rotate(45deg);font:normal 700 13px/1 var(--font);color:#fff}
+.inc-popup .leaflet-popup-content-wrapper,.inc-popup .leaflet-popup-tip{background:var(--surface);color:var(--text);box-shadow:var(--shadow);border:1px solid var(--border-strong)}
+.inc-popup .leaflet-popup-content{margin:12px 14px;font:13px var(--font)}
+.inc-popup a.leaflet-popup-close-button{color:var(--muted)}
+.inc-pop{display:flex;flex-direction:column;gap:8px}
+.inc-pop-title{font:700 14px var(--mono)}
+.inc-pop-addr{font-size:12.5px;color:var(--muted)}
