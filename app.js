@@ -45,18 +45,55 @@ function stationUnits(st){
   return out;
 }
 
+const ORDER_PREVIEW = 8; // stations shown before "+N more"
+const ESZ_MIN_ZOOM = 13;  // ESZ outlines appear at this zoom and closer
+
 function setESZ(key){
   // clear current recommendation on ESZ change
-  const box=document.getElementById('rec'); if(box) box.innerHTML='';
+  clearRecommendation();
   CURRENT_ESZ = key;
   B('esz').textContent = key || '—';
-  const order = (DATA?.ESZ_ORDER?.[key]) || DATA?.GLOBAL_ORDER || [];
-  B('stationOrder').textContent = order.length ? `Station order: ${order.join(' → ')}` : 'Station order: (none)';
+  B('btnRec').disabled = !key;
+  B('recHint').hidden = !!key;
+  ORDER_EXPANDED = false;
+  renderStationOrder();
   if(HILITE) HILITE.setStyle({color:'#3b82f6', weight:4, fillOpacity:0.1});
 }
 
-function pill(text){ const s=document.createElement('span'); s.className='pill blue'; s.textContent=text; return s; }
-function row(cap, arr){ const d=document.createElement('div'); d.className='row'; const l=document.createElement('label'); l.textContent=cap; d.appendChild(l); const box=document.createElement('div'); box.className='box'; arr.forEach(t=>box.appendChild(pill(t))); d.appendChild(box); return d; }
+let ORDER_EXPANDED = false;
+function renderStationOrder(){
+  const box=B('stationOrder'), more=B('btnOrderMore');
+  box.innerHTML='';
+  more.hidden=true;
+  if(!CURRENT_ESZ){ box.textContent='Click the map or search an address.'; return; }
+  const order = (DATA?.ESZ_ORDER?.[CURRENT_ESZ]) || DATA?.GLOBAL_ORDER || [];
+  if(!order.length){ box.textContent='Station order: (none)'; return; }
+  const shown = ORDER_EXPANDED ? order : order.slice(0, ORDER_PREVIEW);
+  const chips=document.createElement('div'); chips.className='chips';
+  shown.forEach((st,i)=>{ const c=document.createElement('span'); c.className='chip'; c.textContent=`${i+1}. ${st}`; chips.appendChild(c); });
+  box.appendChild(chips);
+  if(order.length > ORDER_PREVIEW){
+    more.hidden=false;
+    more.textContent = ORDER_EXPANDED ? 'Show less' : `+${order.length-ORDER_PREVIEW} more`;
+  }
+}
+
+function clearRecommendation(){
+  B('rec').innerHTML='';
+  B('dbg').textContent='';
+  B('recCard').hidden=true;
+}
+
+function unitPill(it){
+  const s=document.createElement('span');
+  if(it.unit==='NEEDED'){ s.className='pill needed'; s.textContent='NEEDED'; return s; }
+  s.className='pill blue'; s.dataset.unit=it.unit;
+  const name=document.createElement('b'); name.textContent=it.unit; s.appendChild(name);
+  const st=trailing(it.st)||it.st;
+  if(st){ const sub=document.createElement('span'); sub.className='pill-sub'; sub.textContent='· Sta '+st; s.appendChild(sub); }
+  return s;
+}
+function row(cap, items){ const d=document.createElement('div'); d.className='row'; const l=document.createElement('label'); l.className='cap'; l.textContent=cap; d.appendChild(l); const box=document.createElement('div'); box.className='box'; items.forEach(it=>box.appendChild(unitPill(it))); d.appendChild(box); return d; }
 
 // SU preference only for BLS at stations 909, 921, 913
 const SU_PREF = new Set(['909','921','913']);
@@ -341,20 +378,23 @@ function renderRecommendation(arr){
   const dbg=B('dbg'); dbg.textContent='';
   const by=new Map();
   for(const it of arr){
-    const g=by.get(it.cap)||[]; g.push(`${it.unit}`); by.set(it.cap,g);
+    const g=by.get(it.cap)||[]; g.push(it); by.set(it.cap,g);
   }
   for(const [cap,list] of by){
     box.appendChild(row(cap,list));
   }
   dbg.textContent = JSON.stringify(arr,null,2);
+  B('recCard').hidden=false;
+  B('recCard').scrollIntoView({block:'nearest', behavior:'smooth'});
 }
 
 function sendDispatch(){
-  const units = [...document.querySelectorAll('#rec .row .box')].flatMap(div => {
-    return [...div.querySelectorAll('.pill')].map(p=>p.textContent.split(' ')[0]);
-  });
+  // NEEDED placeholders carry no data-unit, so they are never dispatched
+  const units = [...document.querySelectorAll('#rec .pill[data-unit]')].map(p=>p.dataset.unit);
   if(!units.length){ banner().className='warn'; banner().textContent='No units selected'; return; }
+  if(!confirm(`Dispatch ${units.length} unit(s) and mark them CALL?\n\n${units.join(', ')}`)) return;
   for(const u of units){ STATUS.set(u,'CALL'); }
+  clearRecommendation();
   const b=banner(); if(b){ b.className='ok'; b.textContent='Dispatch sent: '+units.join(', '); }
 }
 
@@ -520,6 +560,18 @@ async function boot(){
       if(!tilesOk){ banner().className='warn'; banner().textContent='County basemap tiles failed to load'; }
     });
 
+    // ESZ boundaries and labels, drawn by the county server (non-interactive so map clicks pass through).
+    // Hidden when zoomed out, where 639 zones become an unreadable mesh.
+    const eszLayer = L.esri.dynamicMapLayer({
+      url: ESZ_URL.replace(/\/0$/, ''),
+      layers:[0], opacity:0.5, interactive:false
+    });
+    const syncEszLayer = ()=>{
+      if(MAP.getZoom() >= ESZ_MIN_ZOOM) eszLayer.addTo(MAP); else eszLayer.remove();
+    };
+    MAP.on('zoomend', syncEszLayer);
+    syncEszLayer();
+
     // Click to set point + ESZ
     MAP.on('click', async (e)=>{
       if(MARKER) MARKER.remove();
@@ -532,12 +584,13 @@ async function boot(){
   const inc=B('incident'); inc.innerHTML='';
   Object.keys(DATA.PLAN_STRUCT||{}).sort().forEach(k=>{ const o=document.createElement('option'); o.value=o.textContent=k; inc.appendChild(o); });
 
-  // Initial ESZ: pick first known, or wait for click
-  const eszList=new Set([...(Object.keys(DATA.ESZ_ORDER||{})), ...(DATA.NON_HYDRANT_ESZ||[])]);
-  setESZ([...eszList][0]||'0501');
+  // No ESZ until the user clicks the map or searches an address
+  setESZ(null);
+  B('incident').onchange=clearRecommendation;
+  B('btnOrderMore').onclick=()=>{ ORDER_EXPANDED=!ORDER_EXPANDED; renderStationOrder(); };
 
   // Buttons
-  B('btnRec').onclick=()=>{ try{ runRecommend(); banner().className='ok'; banner().textContent='Ready'; }catch(err){ banner().className='warn'; banner().textContent='Recommendation failed: '+(err.message||err); } };
+  B('btnRec').onclick=()=>{ if(!CURRENT_ESZ) return; try{ runRecommend(); banner().className='ok'; banner().textContent='Ready'; }catch(err){ banner().className='warn'; banner().textContent='Recommendation failed: '+(err.message||err); } };
   B('btnDispatch').onclick=sendDispatch;
   B('btnStatus').onclick=openStatus;
   B('closeStatus').onclick=()=>B('statusModal').setAttribute('aria-hidden','true');

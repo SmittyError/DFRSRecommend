@@ -29,6 +29,7 @@
         <span id="esz">—</span>
       </div>
       <div id="stationOrder" class="small" style="margin-top:4px"></div>
+      <button id="btnOrderMore" class="linkbtn" hidden></button>
       <div class="row" style="margin-top:8px">
         <label class="toggle"><input id="mutualAid" type="checkbox" checked/> Mutual Aid</label>
         <button id="btnStatus" class="secondary">Unit status…</button>
@@ -44,17 +45,28 @@
       <select id="incident"></select>
       <div id="planTxt" class="small" style="margin-top:6px"></div>
       <div class="btnrow" style="margin-top:6px">
-        <button id="btnRec">Get recommendation</button>
-        <button id="btnDispatch" class="secondary">Send dispatch</button>
+        <button id="btnRec" disabled>Get recommendation</button>
       </div>
+      <div id="recHint" class="small" style="margin-top:6px">Set a location first.</div>
+    </div>
+
+    <div class="card" id="recCard" hidden>
+      <div class="small">Recommendation</div>
       <div id="rec"></div>
-      <details style="margin-top:8px">
-        <summary>Debug: show selection reasons</summary><pre id="dbg" class="small"></pre>
-      </details>
+      <div class="btnrow dispatch-row">
+        <button id="btnDispatch" class="danger">Send dispatch…</button>
+      </div>
+    </div>
+
+    <details class="card">
+      <summary class="small">Details</summary>
       <div class="small" style="margin-top:8px">
         Run card only. “If closer” = earlier station in run card is eligible; hydrant overrides are honored unless set to AQ. Mutual Aid OFF ⇒ only 900‑series stations.
       </div>
-    </div>
+      <details style="margin-top:8px">
+        <summary class="small">Debug: show selection reasons</summary><pre id="dbg" class="small"></pre>
+      </details>
+    </details>
   </div>
   <div id="map"></div>
 </div>
