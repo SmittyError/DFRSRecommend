@@ -538,6 +538,16 @@ function resetDispatchForm(){
   setESZ(null);
 }
 
+// Landing screen: fade out, then unlock the app behind it
+function dismissSplash(){
+  const splash=B('splash');
+  B('app').inert=false;
+  splash.classList.add('leaving');
+  setTimeout(()=>splash.remove(), 500);
+  MAP?.invalidateSize();
+  B('q').focus();
+}
+
 // --- Active incidents (in memory only; cleared on reload per the no-persistence rule) ---
 // Numbered per session; no timestamps are recorded.
 const INCIDENTS = new Map(); // id -> {id, type, esz, address, lat, lon, units:[{unit,kind}], pin}
@@ -803,6 +813,10 @@ async function setESZFromPoint(lat, lon){
 
 // --- boot ---
 async function boot(){
+  // Wire the landing screen first so it can always be dismissed, even if setup below fails
+  B('btnStart').onclick=dismissSplash;
+  B('btnStart').focus();
+
   // Load embedded DATA
   if(!window.DATA){ banner().className='warn'; banner().textContent='DATA missing'; return; }
   window.DATA = window.DATA || {};

@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <meta name="color-scheme" content="dark light"/>
-<title>FDK Recommend</title>
+<title>Frederick County Fire &amp; EMS Dispatch</title>
 <script>
   // Start in the OS light/dark preference (not saved; the toggle only lasts for this page load)
   document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
@@ -13,7 +13,34 @@
 <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
-<div id="app">
+<!-- Landing screen: shown on every load (nothing is persisted). The app stays inert behind it until Start. -->
+<div id="splash" class="splash" role="dialog" aria-modal="true" aria-labelledby="splashTitle" aria-describedby="splashNotice">
+  <div class="splash-card">
+    <span class="brand-mark splash-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="30" height="30"><path fill="currentColor" d="M12 2c1 3.5 5 6 5 11a5 5 0 0 1-10 0c0-2.2 1-3.8 2.2-5 .2 1.7 1 2.8 2.3 3.3C11 8.8 11.3 5.2 12 2z"/></svg>
+    </span>
+    <h1 id="splashTitle" class="splash-title">Frederick County Fire &amp; EMS Dispatch</h1>
+    <p class="splash-sub">CAD Downtime Run-Card Assistant</p>
+
+    <div id="splashNotice" class="splash-notice">
+      <div class="splash-notice-head">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+        <b>For CAD downtime only</b>
+        <span class="splash-badge">Work in progress</span>
+      </div>
+      <ul>
+        <li>Use this tool <b>only when the CAD system is unavailable.</b> It does not replace CAD.</li>
+        <li>It is still being built. Verify every recommendation against current run cards and policy before dispatching.</li>
+        <li>Unit and run-card data in this version are for testing.</li>
+      </ul>
+    </div>
+
+    <button id="btnStart" class="primary splash-start" type="button">I understand — Start</button>
+    <p class="splash-foot">Runs in your browser. Only map coordinates and searched addresses are sent, and only to Frederick County GIS.</p>
+  </div>
+</div>
+
+<div id="app" inert>
   <aside id="side">
     <header class="appbar">
       <div class="brand">
@@ -21,8 +48,8 @@
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2c1 3.5 5 6 5 11a5 5 0 0 1-10 0c0-2.2 1-3.8 2.2-5 .2 1.7 1 2.8 2.3 3.3C11 8.8 11.3 5.2 12 2z"/></svg>
         </span>
         <div>
-          <h1>FDK Recommend</h1>
-          <div class="subtitle">Frederick County run-card assistant</div>
+          <h1>Fire &amp; EMS Dispatch</h1>
+          <div class="subtitle">Frederick County · CAD downtime</div>
         </div>
         <div class="appbar-actions">
           <button id="btnTheme" class="icon-btn" type="button" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
