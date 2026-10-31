@@ -10,6 +10,11 @@
 - **Typed addresses never leave the browser except to a county-run
   geocoder.** If no county geocoder is available, address search is
   disabled and the user locates by clicking the map.
+- **Exception: OpenStreetMap place names.** pois.js holds real named
+  places (businesses, schools, parks) from OpenStreetMap. It is built
+  once by tools/fetch_pois.py, a developer tool run by hand (one Overpass
+  API request, no user data). The site never contacts OSM or Overpass at
+  runtime. Keep the ODbL credit on the landing page.
 - (keep the rest of the Hard rules unchanged: no timestamps/logs,
   no persistence, fictional data only, static GitHub Pages)
 
@@ -31,7 +36,19 @@
   county EmergencyESZ MapServer layer for the clicked or located point.
 - Address search uses the county locator
   Geoprocessors/FrederickCountyAddressesPublic/GeocodeServer. It matches
-  street addresses only (no intersections or POIs).
+  street addresses only (no intersections or POIs). Intersections
+  ("Street A / Street B", also &, @, and, at) are found by querying both
+  street names from the county Basemap/Centerline_StreetSearch layer and
+  matching where segments meet, in the browser. Centerlines spell
+  numbered streets out (E SEVENTH ST) and have no route numbers (US 15,
+  I-70); those streets go by name only. A verified location replaces the
+  text in the search box.
+- Place search: text not starting with a digit is matched first against
+  window.POIS in pois.js ([name, brand, category, address, town, lat, lon],
+  ~2,400 entries, ~210 KB; don't read it whole, grep it). Matching is local.
+  ~60% lack a street address, so the picker labels those "Near <address>"
+  via the county reverseGeocode (coordinates only). Rebuild with
+  `python3 tools/fetch_pois.py` (falls back to curl if Python's SSL is old).
 - Leaflet 1.9.4 and esri-leaflet 3.1.0 are vendored in vendor/.
 - Active incidents (Active tab) live in memory only and are numbered per
   session, with no timestamps. Dispatch sets units to CALL; clearing a unit

@@ -37,6 +37,16 @@
 
     <button id="btnStart" class="primary splash-start" type="button">I understand — Start</button>
     <p class="splash-foot">Runs in your browser. Only map coordinates and searched addresses are sent, and only to Frederick County GIS.</p>
+
+    <section class="splash-credits" aria-label="Credits">
+      <h2>Credits</h2>
+      <dl>
+        <div><dt>Project creator</dt><dd>Dalen Hahn</dd></div>
+        <div><dt>Development</dt><dd>Austin Smith</dd></div>
+        <div><dt>Maps &amp; addresses</dt><dd>Frederick County GIS</dd></div>
+        <div><dt>Place names</dt><dd>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>, ODbL</dd></div>
+      </dl>
+    </section>
   </div>
 </div>
 
@@ -73,7 +83,7 @@
     <section class="card">
       <h2 class="step"><span class="step-num">1</span>Location</h2>
       <div class="field-row">
-        <input id="q" type="search" placeholder="e.g. 200 N Main St" aria-label="Street address"/>
+        <input id="q" type="search" placeholder="Address, Street / Street, or place (Food Lion)" aria-label="Street address, intersection, or place name"/>
         <button id="btnLocate">Locate</button>
       </div>
       <div id="addrChoices" class="addr-choices" hidden>
@@ -83,7 +93,7 @@
         </div>
         <div id="addrChoicesList" role="list"></div>
       </div>
-      <p class="hint">Search a street address or click the map. ESZ sets automatically.</p>
+      <p class="hint">Search an address, intersection, or place name, or click the map. ESZ sets automatically.</p>
     </section>
 
     <section class="card">
@@ -167,6 +177,7 @@
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="vendor/esri-leaflet/esri-leaflet.js"></script>
 <script src="data.js"></script>
+<script src="pois.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

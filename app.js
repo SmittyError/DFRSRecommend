@@ -15,6 +15,8 @@ const ESZ_URL = 'https://fcgis.frederickcountymd.gov/server_pub/rest/services/Pu
 // County address locator (Frederick County addresses only)
 const GEOCODE_URL = 'https://fcgis.frederickcountymd.gov/server_pub/rest/services/Geoprocessors/FrederickCountyAddressesPublic/GeocodeServer';
 const MIN_GEOCODE_SCORE = 90;
+// County street centerlines; the locators can't do intersections, so we find where two streets meet
+const CENTERLINE_URL = 'https://fcgis.frederickcountymd.gov/server_pub/rest/services/Basemap/Centerline_StreetSearch/MapServer/0';
 
 function mutualAidEnabled(){ return B('mutualAid').checked; }
 function isAvailable(u){ return (STATUS.get(u) || DATA?.UNIT_STATUS?.[u] || 'AQ') === 'AQ'; }
@@ -903,13 +905,26 @@ async function boot(){
   B('closeStatus').onclick=()=>B('statusModal').setAttribute('aria-hidden','true');
   B('resetCaps').onclick=resetCaps;
 
-  // Address search via the county geocoder only (street addresses; no intersections)
+  // Address search via the county geocoder; "Street A / Street B" via county centerlines; place names via pois.js
   B('btnLocate').onclick=locateAddress;
   B('q').addEventListener('keydown', e=>{
     if(e.key==='Enter') locateAddress();
     else if(e.key==='Escape' && !B('addrChoices').hidden) clearAddressChoices();
   });
   B('addrChoicesCancel').onclick=()=>{ clearAddressChoices(); banner().className='ok'; banner().textContent='Ready'; B('q').focus(); };
+  // Pick list keyboard: arrows move between choices (Enter picks the focused one), Esc closes
+  B('addrChoicesList').addEventListener('keydown', e=>{
+    const rows=[...B('addrChoicesList').querySelectorAll('button.addr-choice')];
+    const i=rows.indexOf(document.activeElement);
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();
+      rows[e.key==='ArrowDown' ? (i+1)%rows.length : (i<=0 ? rows.length-1 : i-1)]?.focus();
+    }else if(e.key==='Escape') B('addrChoicesCancel').click();
+  });
+  // Down arrow from the search box jumps into an open pick list
+  B('q').addEventListener('keydown', e=>{
+    if(e.key==='ArrowDown' && !B('addrChoices').hidden){ e.preventDefault(); B('addrChoicesList').querySelector('button.addr-choice')?.focus(); }
+  });
 }
 
 async function geocode(path, params){
@@ -927,6 +942,15 @@ async function locateAddress(){
   clearAddressChoices();
   setLocateBusy(true);
   try{
+    const streets = parseIntersection(q);
+    if(streets) return await locateIntersection(q, streets);
+    // Anything starting with a house number is an address; otherwise try place names first
+    if(!/^\d/.test(q)){
+      const places = findPlaces(q);
+      if(places.length===1) return await goToPlace(places[0]);
+      if(places.length) return showPlaceChoices(q, places);
+    }
+
     const js = await geocode('/findAddressCandidates', {SingleLine:q, outSR:'4326', maxLocations:'10'});
     const good = (js.candidates||[]).filter(c=>c.score >= MIN_GEOCODE_SCORE);
     const top = good[0];
@@ -954,11 +978,127 @@ async function resolveSuggestion(s){
   }catch{ return null; }
 }
 
+// --- Intersections ("Rosemont Ave / Montevue Ln", "Main St & Church St, Frederick") ---
+// The county locators only know point addresses, so we pull both streets from the county
+// centerline layer and find where their segments meet.
+const INTERSECTION_SEP = /\s*[\/&@+]\s*|\s+(?:AND|AT)\s+/i;
+const JOIN_TOLERANCE_M = 15;  // a segment end this close to the other street counts as meeting it
+const SAME_SPOT_M = 40;       // meeting points this close together are one intersection (N/S, E/W halves of a cross street)
+// Centerlines spell numbered streets out ("E SEVENTH ST")
+const ORDINALS = ['FIRST','SECOND','THIRD','FOURTH','FIFTH','SIXTH','SEVENTH','EIGHTH','NINTH','TENTH',
+  'ELEVENTH','TWELFTH','THIRTEENTH','FOURTEENTH','FIFTEENTH','SIXTEENTH','SEVENTEENTH','EIGHTEENTH','NINETEENTH','TWENTIETH'];
+const spellOrdinals = s => s.replace(/\b(\d+)(?:ST|ND|RD|TH)\b/g, (m,n)=>ORDINALS[n-1]||m);
+
+function parseIntersection(q){
+  const [main, town=''] = q.split(/,(.*)/s).map(s=>s.trim());
+  const parts = main.split(INTERSECTION_SEP).map(s=>spellOrdinals(normAddr(s))).filter(Boolean);
+  return parts.length===2 && parts[0]!==parts[1] ? {a:parts[0], b:parts[1], town:town.toUpperCase()} : null;
+}
+
+// Street segments whose name has a word starting with the typed text ("MAIN ST" -> N MAIN ST, MAIN ST EXT)
+async function fetchStreet(name){
+  const s = name.replace(/[%_]/g,'').replace(/'/g,"''");
+  const r = await fetch(CENTERLINE_URL + '/query?' + new URLSearchParams({
+    f:'json', where:`ST_FULL LIKE '${s}%' OR ST_FULL LIKE '% ${s}%'`,
+    outFields:'ST_FULL,CITY', returnGeometry:'true', outSR:'4326',
+  }));
+  const js = await r.json();
+  if(js.error) throw new Error(js.error.message || 'street lookup failed');
+  return (js.features||[]).map(f=>({name:f.attributes.ST_FULL, city:f.attributes.CITY||'', paths:f.geometry?.paths||[]}));
+}
+
+function metersApart([x1,y1],[x2,y2]){
+  const dx=(x2-x1)*111320*Math.cos(y1*Math.PI/180), dy=(y2-y1)*110540;
+  return Math.hypot(dx,dy);
+}
+
+// Where segment A's end touches any vertex of B, or B's end touches A (covers T-intersections)
+function meetingPoint(fa, fb){
+  const ends = f => f.paths.flatMap(p=>[p[0], p[p.length-1]]);
+  const verts = f => f.paths.flat();
+  for(const [e, other] of [[ends(fa), verts(fb)], [ends(fb), verts(fa)]])
+    for(const p of e) for(const v of other)
+      if(metersApart(p,v) <= JOIN_TOLERANCE_M) return p;
+  return null;
+}
+
+async function locateIntersection(q, {a, b, town}){
+  const [segA, segB] = await Promise.all([fetchStreet(a), fetchStreet(b)]);
+  if(!segA.length) throw new Error(`no county street matches "${a}"`);
+  if(!segB.length) throw new Error(`no county street matches "${b}"`);
+
+  const found = []; // {address, lat, lon}
+  for(const fa of segA) for(const fb of segB){
+    if(fa.name===fb.name) continue;
+    const city = fa.city || fb.city;
+    if(town && !city.toUpperCase().startsWith(town)) continue;
+    const p = meetingPoint(fa, fb);
+    if(!p) continue;
+    const address = `${fa.name} & ${fb.name}${city ? ', '+city : ''}`;
+    if(found.some(f=>metersApart([f.lon,f.lat], p) <= SAME_SPOT_M)) continue;
+    found.push({address, lat:p[1], lon:p[0]});
+  }
+  if(!found.length) throw new Error(`${a} and ${b} don't meet in county street data`);
+  if(found.length===1) return await goToAddress(found[0].address, found[0].lat, found[0].lon);
+  showAddressChoices(q, found, 'intersection');
+}
+
+// --- Places ("Food Lion", "Urbana Library") from pois.js, an OpenStreetMap extract built by
+// tools/fetch_pois.py. Matching is all local; only a picked place's coordinates go to the county.
+const MAX_PLACE_CHOICES = 25;
+const normPlace = s => String(s).toLowerCase().replace(/[^a-z0-9 ]+/g,' ').split(/\s+/).filter(Boolean);
+let PLACE_INDEX = null; // [{name, street, town, lat, lon, words}]
+
+function findPlaces(q){
+  if(!PLACE_INDEX) PLACE_INDEX = (window.POIS||[]).map(([name, brand, , street, town, lat, lon])=>
+    ({name, street, town, lat, lon, words:normPlace(name+' '+brand)}));
+  const typed = normPlace(q);
+  if(!typed.length) return [];
+  // Every typed word must start a word of the name or brand ("food lion" -> "Food Lion #1234")
+  const hits = PLACE_INDEX.filter(p=>typed.every(t=>p.words.some(w=>w.startsWith(t))));
+  const lead = typed.join(' ');
+  const rank = p => normPlace(p.name).join(' ').startsWith(lead) ? 0 : 1;
+  return hits.sort((a,b)=>rank(a)-rank(b) || a.name.localeCompare(b.name) || a.town.localeCompare(b.town));
+}
+
+// About 60% of places have no street address in OSM; label those by the nearest county address
+async function nearestAddress(lat, lon){
+  try{
+    const a = (await geocode('/reverseGeocode', {location:JSON.stringify({x:lon, y:lat, spatialReference:{wkid:4326}}), outSR:'4326'})).address;
+    return a?.Address ? {street:'Near '+a.Address, town:a.City||''} : null;
+  }catch{ return null; }
+}
+
+const placeLabel = p => [p.name, p.street, p.town].filter(Boolean).join(', ');
+const placeSub = p => [p.street, p.town].filter(Boolean).join(' · ') || 'Looking up nearest address…';
+
+async function goToPlace(p){
+  if(!p.street){ const near = await nearestAddress(p.lat, p.lon); if(near) p = {...p, street:near.street, town:p.town||near.town}; }
+  return goToAddress(placeLabel(p), p.lat, p.lon);
+}
+
+function showPlaceChoices(q, places){
+  const shown = places.slice(0, MAX_PLACE_CHOICES).map(p=>({...p}));
+  shown.forEach(p=>{ p.address = placeLabel(p); p.pick = ()=>goToPlace(p); });
+  showAddressChoices(q, shown, 'place', places.length);
+  // Fill in missing addresses as the county answers; rows update in place (skipped once the list is gone)
+  const rows = [...B('addrChoicesList').querySelectorAll('button.addr-choice')];
+  shown.forEach((p,i)=>{
+    if(p.street) return;
+    nearestAddress(p.lat, p.lon).then(near=>{
+      if(!rows[i].isConnected) return;
+      if(near){ p.street = near.street; p.town = p.town || near.town; }
+      rows[i].querySelector('.addr-street').textContent = near ? placeSub(p) : (p.town || 'No address on file');
+    });
+  });
+}
+
 async function goToAddress(address, lat, lon){
   clearAddressChoices();
   if(MARKER) MARKER.remove();
   MARKER = L.marker([lat, lon]).addTo(MAP);
   CURRENT_ADDR = address; ADDR_REQ++;
+  B('q').value = address; // replace the partial text with the verified address
   MAP.setView([lat, lon], 16);
   banner().className='ok'; banner().textContent='Located: '+address;
   await setESZFromPoint(lat, lon); // may replace banner with an ESZ lookup warning
@@ -977,19 +1117,24 @@ let CHOICE_LAYER=null;
 const ABBR = {NORTH:'N',SOUTH:'S',EAST:'E',WEST:'W',STREET:'ST',AVENUE:'AVE',ROAD:'RD',DRIVE:'DR',LANE:'LN',COURT:'CT',PLACE:'PL',BOULEVARD:'BLVD',PIKE:'PIKE',CIRCLE:'CIR',TERRACE:'TER'};
 const normAddr = s => String(s).toUpperCase().replace(/[.,#]/g,' ').split(/\s+/).filter(Boolean).map(w=>ABBR[w]||w).join(' ');
 
-function showAddressChoices(q, options){
+// kind: 'address' | 'intersection' | 'place'. Places arrive with name/street/town already split
+// and their own pick(); total is how many places matched before the list was capped.
+function showAddressChoices(q, options, kind='address', total=options.length){
+  const isXing = kind==='intersection', isPlace = kind==='place';
   const typed = normAddr(q.split(',')[0]);
-  const parse = o => { const [street, town='', , zip=''] = o.address.split(',').map(s=>s.trim()); return {...o, street, town, zip}; };
-  // Exact street match (typed text may also carry a town after the street)
-  const isExact = o => { const st=normAddr(o.street); return st.startsWith(typed) || typed.startsWith(st+' '); };
+  const parse = o => { if(isPlace) return o; const [street, town='', , zip=''] = o.address.split(',').map(s=>s.trim()); return {...o, street, town, zip}; };
+  // Exact street match (typed text may also carry a town after the street); every intersection or place found is a real match
+  const isExact = o => { if(isXing || isPlace) return true; const st=normAddr(o.street); return st.startsWith(typed) || typed.startsWith(st+' '); };
   const all = options.map(parse);
   const exact = all.filter(isExact), similar = all.filter(o=>!isExact(o));
   const ordered = [...exact, ...similar];
 
   const box=B('addrChoices'), list=B('addrChoicesList');
   list.innerHTML='';
-  B('addrChoicesTitle').textContent = exact.length > 1
-    ? `${exact.length} towns have this address. Pick one:`
+  B('addrChoicesTitle').textContent = isPlace
+    ? (total > exact.length ? `Showing ${exact.length} of ${total} places. Type more to narrow:` : `${exact.length} places match. Pick one:`)
+    : isXing ? `${exact.length} intersections match. Pick one:`
+    : exact.length > 1 ? `${exact.length} towns have this address. Pick one:`
     : 'No exact single match. Pick an address:';
 
   CHOICE_LAYER = L.layerGroup().addTo(MAP);
@@ -1003,18 +1148,19 @@ function showAddressChoices(q, options){
     b.type='button'; b.className='addr-choice'+(i<exact.length?' exact':''); b.setAttribute('role','listitem');
     const num=document.createElement('span'); num.className='addr-num'; num.textContent=n;
     const txt=document.createElement('span'); txt.className='addr-txt';
-    const town=document.createElement('b'); town.textContent=o.town||'(no town)';
-    const st=document.createElement('span'); st.className='addr-street'; st.textContent=`${o.street}${o.zip?' · '+o.zip:''}`;
+    const town=document.createElement('b'); town.textContent=isPlace ? o.name : (o.town||'(no town)');
+    const st=document.createElement('span'); st.className='addr-street'; st.textContent=isPlace ? placeSub(o) : `${o.street}${o.zip?' · '+o.zip:''}`;
     txt.append(town, st); b.append(num, txt);
-    b.onclick=()=>goToAddress(o.address, o.lat, o.lon);
+    const pick = o.pick || (()=>goToAddress(o.address, o.lat, o.lon));
+    b.onclick=pick;
 
     const pin = L.marker([o.lat,o.lon], {
       icon: L.divIcon({className:'addr-pin'+(i<exact.length?' exact':''), html:`<span>${n}</span>`, iconSize:[26,26], iconAnchor:[13,13]}),
       title: o.address, keyboard:false,
-    // Permanent town labels only on exact matches; similar ones label on hover to avoid overlap
-    }).bindTooltip(i<exact.length ? (o.town||o.street) : o.address.split(',').slice(0,2).join(','),
-                   {permanent:i<exact.length, direction:'right', offset:[12,0], className:'addr-tip'})
-      .on('click', ()=>goToAddress(o.address, o.lat, o.lon))
+    // Permanent town labels only on exact matches (and short place lists); the rest label on hover to avoid overlap
+    }).bindTooltip(isPlace ? (o.town ? `${o.name} · ${o.town}` : o.name) : isXing ? o.street : i<exact.length ? (o.town||o.street) : o.address.split(',').slice(0,2).join(','),
+                   {permanent:i<exact.length && !(isPlace && exact.length > 8), direction:'right', offset:[12,0], className:'addr-tip'})
+      .on('click', pick)
       .addTo(CHOICE_LAYER);
     pins.push(pin);
     // Hovering a row highlights its pin
@@ -1025,7 +1171,7 @@ function showAddressChoices(q, options){
 
   box.hidden=false;
   MAP.fitBounds(L.latLngBounds(pins.map(p=>p.getLatLng())), {padding:[60,60], maxZoom:15});
-  banner().className='warn'; banner().textContent=`Multiple matches for "${q}". Pick the correct town.`;
+  banner().className='warn'; banner().textContent=`Multiple matches for "${q}". Pick the correct ${isPlace ? 'place' : isXing ? 'intersection' : 'town'}.`;
   list.querySelector('button')?.focus();
 }
 
